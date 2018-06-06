@@ -108,8 +108,6 @@ where
             next = next + (1usize << blk_order);
         }
 
-        panic!("{:?}", blocks);
-
         /////////////
         // Phase 2 //
         /////////////
@@ -201,9 +199,14 @@ where
 
             // Round `start` up to the nearest `size`-aligned allocation.
             let round_start = start & (size - 1);
+            let round_start = if round_start == start {
+                round_start
+            } else {
+                round_start + size
+            };
 
             // Is such a block inside the interval?
-            if round_start + size > end {
+            if round_start + size > end + 1 {
                 // Too big. Shrink size.
                 order -= 1;
             } else {
@@ -287,7 +290,6 @@ mod test {
         // check initial state
         assert_eq!(a.bins.len(), 10);
         assert_eq!(a.bins[9].len(), 1);
-        panic!("{:#?}", a);
         assert!(a.bins[9].contains(&0));
         for i in 0..9 {
             assert_eq!(a.bins[i].len(), 0);
