@@ -137,19 +137,22 @@ where
         // Sanity check
         assert!(order < self.bins.len());
 
+        // If this is the max tier, then insert. There is no coallescing.
+        if order == self.bins.len()-1 {
+            self.bins[order].insert(val);
+            return;
+        }
+
         // Check if the buddy is free. If so, remove it and increase the order of `val`
         let buddy = BuddyAllocator::buddy_of(val, order);
-        let (val, order) =
-            if self.bins[order].remove(&buddy) {
-                // should insert the whole block!
-                let val = cmp::min(val, buddy);
-                (val, order + 1)
-            } else {
-                (val, order)
-            };
-
-        // Insert into the proper tier
-        self.bins[order].insert(val);
+        if self.bins[order].remove(&buddy) {
+            // There is a buddy! Coallesce by recursively freeing!
+            let val = cmp::min(val, buddy);
+            self.free(val, 1usize << (order+1));
+        } else {
+            // No buddy. Just insert.
+            self.bins[order].insert(val);
+        };
     }
 
     /// Helper to get the buddy value of the given value
@@ -283,6 +286,7 @@ impl_one_zero!(i8);
 mod test {
     use super::*;
 
+    // Tests a simple sequence of init, alloc, and free
     #[test]
     fn test_simple() {
         let mut a = BuddyAllocator::new(0, 511, 10);
@@ -341,7 +345,70 @@ mod test {
         }
     }
 
-    // TODO: test with small number of bins
+    // Test extend with the simplest possible cases
+    #[test]
+    fn test_extend_simple() {
+        let mut a = BuddyAllocator::new(0, 255, 10);
 
-    // TODO: test extend
+        // check initial state
+        assert_eq!(a.bins.len(), 10);
+        assert_eq!(a.bins[9].len(), 0);
+        assert_eq!(a.bins[8].len(), 1);
+        assert!(a.bins[8].contains(&0));
+        for i in 0..8 {
+            assert_eq!(a.bins[i].len(), 0);
+        }
+
+        // Extend. The block should be coallesced
+        a.extend(256, 511);
+
+        // check state
+        assert_eq!(a.bins.len(), 10);
+        assert_eq!(a.bins[9].len(), 1);
+        assert!(a.bins[9].contains(&0));
+        for i in 0..9 {
+            assert_eq!(a.bins[i].len(), 0);
+        }
+
+        // Extend. The block should _not_ be coallesced
+        a.extend(512, 767);
+
+        // check state
+        assert_eq!(a.bins.len(), 10);
+        assert_eq!(a.bins[9].len(), 1);
+        assert_eq!(a.bins[8].len(), 1);
+        assert!(a.bins[8].contains(&512));
+        assert!(a.bins[9].contains(&0));
+        for i in 0..8 {
+            assert_eq!(a.bins[i].len(), 0);
+        }
+    }
+
+    // Test extend when the extension needs to be broken into pieces
+    #[test]
+    fn test_extend_break() {
+        let mut a = BuddyAllocator::new(0, 255, 10);
+
+        // check initial state
+        assert_eq!(a.bins.len(), 10);
+        assert_eq!(a.bins[9].len(), 0);
+        assert_eq!(a.bins[8].len(), 1);
+        assert!(a.bins[8].contains(&0));
+        for i in 0..8 {
+            assert_eq!(a.bins[i].len(), 0);
+        }
+
+        // Extend. The block should be broken and partially coallesced
+        a.extend(256, 767);
+
+        // check state
+        assert_eq!(a.bins.len(), 10);
+        assert_eq!(a.bins[9].len(), 1);
+        assert_eq!(a.bins[8].len(), 1);
+        assert!(a.bins[8].contains(&512));
+        assert!(a.bins[9].contains(&0));
+        for i in 0..8 {
+            assert_eq!(a.bins[i].len(), 0);
+        }
+    }
 }
