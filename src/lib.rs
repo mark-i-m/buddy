@@ -9,7 +9,13 @@
 extern crate alloc;
 
 use alloc::{BTreeSet, Vec};
-use core::ops::{Shl, BitXor};
+use core::{cmp, fmt::Debug, ops::{Add, BitAnd, Shl, BitXor}, mem};
+
+/// Types that have an additive identity value.
+pub trait Zero {
+    /// Return the 0 value.
+    fn zero() -> Self;
+}
 
 /// Types that have a multiplicative identity value.
 pub trait One {
@@ -21,12 +27,17 @@ pub trait One {
 ///
 /// The allocator allocates values of type `T`, where `T: Allocatable`. For example, `T` could be
 /// `usize` or some form of ID number.
+#[derive(Debug)]
 pub struct BuddyAllocator<T>
 where
-    T: One,
+    T: Zero + One,
     T: Ord,
     T: Copy,
-    T: Shl<usize, Output=T> + BitXor<Output = T>,
+    T: Debug,
+    T: Shl<usize, Output = T>,
+    T: Add<usize, Output = T>,
+    T: BitAnd<usize, Output = T>,
+    T: BitXor<Output = T>,
 {
     /// The free lists ("bins"). Bin `i` contains allocations of size `1 << i`. The number of bins
     /// determines the maximum allocation size.
@@ -35,10 +46,14 @@ where
 
 impl<T> BuddyAllocator<T>
 where
-    T: One,
+    T: Zero + One,
     T: Ord,
     T: Copy,
-    T: Shl<usize, Output=T> + BitXor<Output = T>,
+    T: Debug,
+    T: Shl<usize, Output = T>,
+    T: Add<usize, Output = T>,
+    T: BitAnd<usize, Output = T>,
+    T: BitXor<Output = T>,
 {
     /// Create a new buddy allocator over the given range of values. `start` _and_ `end` are
     /// inclusive.
@@ -56,11 +71,53 @@ where
     }
 
     /// Add the given range to the buddy allocator. `start` _and_ `end` are inclusive.
-    /// TODO: maybe this has to be contiguous? Otherwise, how do we tell if there is a whole? Maybe
-    /// by size of allocations?
+    ///
+    /// Conceptually this basically the same as `free` but it breaks down irregularly-sized or
+    /// irregularly-aligned blocks into aligned, power-of-2-sized blocks.
     pub fn extend(&mut self, start: T, end: T) {
-        //TODO: recursively decompose into powers of two.
-        //TODO: split large block sizes into size of last bin.
+        // This method proceeds in two phases:
+        // 1. Decompose the given range into well-formed blocks. A well-formed block is aligned to
+        //    its size, and has a size that is a power of two.
+        // 2. Add all of the decomposed blocks to the allocator.
+
+        /////////////
+        // Phase 1 //
+        /////////////
+
+        // The list of well-formed blocks
+        let mut blocks = Vec::new();
+
+        // The next value to be handled
+        let mut next = start;
+
+        // Keep going until we have handled the whole range
+        while next <= end {
+            // Find the max order for which the alignment of `next` will suffice. This implies that
+            // for all orders `o < order`, the alignment of `next` will suffice for `o`.
+            let order = BuddyAllocator::alignment_of(next);
+
+            // Max order: the maximum order that fits between `next` and `end` (inclusive).
+            let max_order = self.max_order(next, end);
+
+            // The order of our next block must be...
+            let blk_order = [order, max_order, self.bins.len()-1].iter().cloned().min().unwrap();
+
+            // Now we have a well-formed block!
+            blocks.push((next, blk_order));
+
+            next = next + (1usize << blk_order);
+        }
+
+        panic!("{:?}", blocks);
+
+        /////////////
+        // Phase 2 //
+        /////////////
+
+        // Go through all of our well-formed blocks and free them
+        for (start, order) in blocks.into_iter() {
+            self.free(start, 1usize << order);
+        }
     }
 
     /// Allocate at least `n` values from the allocator.
@@ -83,11 +140,14 @@ where
         assert!(order < self.bins.len());
 
         // Check if the buddy is free. If so, remove it and increase the order of `val`
-        let order =
-            if self.bins[order].remove(&BuddyAllocator::buddy_of(val, order)) {
-                order + 1
+        let buddy = BuddyAllocator::buddy_of(val, order);
+        let (val, order) =
+            if self.bins[order].remove(&buddy) {
+                // should insert the whole block!
+                let val = cmp::min(val, buddy);
+                (val, order + 1)
             } else {
-                order
+                (val, order)
             };
 
         // Insert into the proper tier
@@ -113,6 +173,46 @@ where
 
         // Log_2(n) = # of trailing zeros b/c n is a power of 2
         n.trailing_zeros() as usize
+    }
+
+    /// Helper to get the alignment of the given allocation
+    fn alignment_of(val: T) -> usize {
+        let mut align = 0; // start with min align
+        while align < 8 * mem::size_of::<usize>() {
+            // if bit `align+1` of `val` is 0, then is `val` is `align+1`-aligned
+            let bit = val & (1usize << align);
+            if bit == T::zero() {
+                align += 1;
+            } else {
+                break;
+            }
+        }
+        align
+    }
+
+    /// Helper to get the maximum order allocation that will fit between `start` and `end`,
+    /// inclusive.
+    fn max_order(&self, start: T, end: T) -> usize {
+        // Start with the largest order
+        let mut order = self.bins.len()-1;
+
+        loop {
+            let size = 1usize << order;
+
+            // Round `start` up to the nearest `size`-aligned allocation.
+            let round_start = start & (size - 1);
+
+            // Is such a block inside the interval?
+            if round_start + size > end {
+                // Too big. Shrink size.
+                order -= 1;
+            } else {
+                // It fits!
+                break;
+            }
+        }
+
+        order
     }
 
     /// Helper to recursively try to allocate a block of values of the given size.
@@ -146,31 +246,35 @@ where
     }
 }
 
-macro_rules! impl_one {
+macro_rules! impl_one_zero {
     ($ty:ident) => {
         impl One for $ty {
             fn one() -> $ty { 1 }
         }
+
+        impl Zero for $ty {
+            fn zero() -> $ty { 0 }
+        }
     }
 }
 
-impl_one!(usize);
-impl_one!(isize);
+impl_one_zero!(usize);
+impl_one_zero!(isize);
 
-impl_one!(u128);
-impl_one!(i128);
+impl_one_zero!(u128);
+impl_one_zero!(i128);
 
-impl_one!(u64);
-impl_one!(i64);
+impl_one_zero!(u64);
+impl_one_zero!(i64);
 
-impl_one!(u32);
-impl_one!(i32);
+impl_one_zero!(u32);
+impl_one_zero!(i32);
 
-impl_one!(u16);
-impl_one!(i16);
+impl_one_zero!(u16);
+impl_one_zero!(i16);
 
-impl_one!(u8);
-impl_one!(i8);
+impl_one_zero!(u8);
+impl_one_zero!(i8);
 
 #[cfg(test)]
 mod test {
@@ -183,6 +287,7 @@ mod test {
         // check initial state
         assert_eq!(a.bins.len(), 10);
         assert_eq!(a.bins[9].len(), 1);
+        panic!("{:#?}", a);
         assert!(a.bins[9].contains(&0));
         for i in 0..9 {
             assert_eq!(a.bins[i].len(), 0);
