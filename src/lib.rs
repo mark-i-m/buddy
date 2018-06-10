@@ -55,19 +55,14 @@ where
     T: BitAnd<usize, Output = T>,
     T: BitXor<Output = T>,
 {
-    /// Create a new buddy allocator over the given range of values. `start` _and_ `end` are
-    /// inclusive.
-    pub fn new(start: T, end: T, nbins: u8) -> Self {
+    /// Create a new empty buddy allocator with the given number of bins.
+    pub fn new(nbins: u8) -> Self {
         let mut bins = Vec::with_capacity(nbins as usize);
         for _ in 0..nbins {
             bins.push(BTreeSet::new());
         }
 
-        let mut new = BuddyAllocator { bins };
-
-        new.extend(start, end);
-
-        new
+        BuddyAllocator { bins }
     }
 
     /// Add the given range to the buddy allocator. `start` _and_ `end` are inclusive.
@@ -289,7 +284,8 @@ mod test {
     // Tests a simple sequence of init, alloc, and free
     #[test]
     fn test_simple() {
-        let mut a = BuddyAllocator::new(0, 511, 10);
+        let mut a = BuddyAllocator::new(10);
+        a.extend(0, 511);
 
         // check initial state
         assert_eq!(a.bins.len(), 10);
@@ -348,7 +344,8 @@ mod test {
     // Test extend with the simplest possible cases
     #[test]
     fn test_extend_simple() {
-        let mut a = BuddyAllocator::new(0, 255, 10);
+        let mut a = BuddyAllocator::new(10);
+        a.extend(0, 255);
 
         // check initial state
         assert_eq!(a.bins.len(), 10);
@@ -387,7 +384,8 @@ mod test {
     // Test extend when the extension needs to be broken into pieces
     #[test]
     fn test_extend_break() {
-        let mut a = BuddyAllocator::new(0, 255, 10);
+        let mut a = BuddyAllocator::new(10);
+        a.extend(0, 255);
 
         // check initial state
         assert_eq!(a.bins.len(), 10);
