@@ -8,8 +8,13 @@
 
 extern crate alloc;
 
-use alloc::{BTreeSet, Vec};
-use core::{cmp, fmt::Debug, ops::{Add, BitAnd, Shl, BitXor}, mem};
+use alloc::{collections::BTreeSet, vec::Vec};
+use core::{
+    cmp,
+    fmt::Debug,
+    mem,
+    ops::{Add, BitAnd, BitXor, Shl},
+};
 
 /// Types that have an additive identity value.
 pub trait Zero {
@@ -95,7 +100,11 @@ where
             let max_order = self.max_order(next, end);
 
             // The order of our next block must be...
-            let blk_order = [order, max_order, self.bins.len()-1].iter().cloned().min().unwrap();
+            let blk_order = [order, max_order, self.bins.len() - 1]
+                .iter()
+                .cloned()
+                .min()
+                .unwrap();
 
             // Now we have a well-formed block!
             blocks.push((next, blk_order));
@@ -133,7 +142,7 @@ where
         assert!(order < self.bins.len());
 
         // If this is the max tier, then insert. There is no coallescing.
-        if order == self.bins.len()-1 {
+        if order == self.bins.len() - 1 {
             self.bins[order].insert(val);
             return;
         }
@@ -143,7 +152,7 @@ where
         if self.bins[order].remove(&buddy) {
             // There is a buddy! Coallesce by recursively freeing!
             let val = cmp::min(val, buddy);
-            self.free(val, 1usize << (order+1));
+            self.free(val, 1usize << (order + 1));
         } else {
             // No buddy. Just insert.
             self.bins[order].insert(val);
@@ -190,7 +199,7 @@ where
     /// inclusive.
     fn max_order(&self, start: T, end: T) -> usize {
         // Start with the largest order
-        let mut order = self.bins.len()-1;
+        let mut order = self.bins.len() - 1;
 
         loop {
             let size = 1usize << order;
@@ -250,13 +259,17 @@ where
 macro_rules! impl_one_zero {
     ($ty:ident) => {
         impl One for $ty {
-            fn one() -> $ty { 1 }
+            fn one() -> $ty {
+                1
+            }
         }
 
         impl Zero for $ty {
-            fn zero() -> $ty { 0 }
+            fn zero() -> $ty {
+                0
+            }
         }
-    }
+    };
 }
 
 impl_one_zero!(usize);
